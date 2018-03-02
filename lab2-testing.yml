@@ -1,0 +1,24 @@
+---
+- hosts: localhost 
+  vars:
+    users:
+        - { name: Test User, age: 22, email: test@test.com }
+        - { name: New User, age: 12, email: test@test.com }
+        - { name: Dummy User, age: 12, email: test@test.com }
+  tasks:
+    - name: Add a users in lab2 app using http post to /add.php
+      uri:
+        url: http://loadbalancer.lab2/add.php
+        method: POST
+        body: "name={{item.name}}&age={{item.age}}&email={{item.email}}&Submit=Add"
+      with_items: "{{users}}"
+    - name: Get the homepage that list all the added users
+      uri:
+        url: http://loadbalancer.lab2/
+        method: GET
+        return_content: yes
+      register: homepage
+    - name: Test if the users we added exist there
+      fail:
+      when: "item.name not in homepage.content"
+      with_items: "{{users}}"

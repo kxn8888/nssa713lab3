@@ -1,0 +1,163 @@
+---
+# Playbook for Lab2
+# Contains 4 Plays. 1 Common Play
+# and 3 plays for each service
+
+# Common play, runs on all hosts
+- hosts: all
+  tasks:
+    - name: Set Hostname according to the ansible inventory
+      hostname:
+        name: "{{inventory_hostname}}"
+    - name: Set timezone to Asia/Dubai
+      timezone:
+        name: Asia/Dubai
+    - name: Install network time service (chrony)
+      yum:
+        name: chrony
+        state: present
+    - name: Start chrony and enable across reboots
+      service:
+        name: chronyd
+        state: started
+        enabled: yes
+    - name: Install commonly required software
+      yum:
+        name: "{{item}}"
+        state: present
+      with_items: [ git, tcpdump, screen ]
+
+    - set_fact:
+        dbname: lab2db
+        dbuser: lab2dbuser
+        dbpass: kip9iS397ID
+
+# Play for webserver
+- hosts: webserver.lab2
+  tasks:
+    - name: Install Apache and PHP
+      yum:
+        name: "{{item}}"
+        state: present
+      with_items: [ httpd, php, php-mysql ]
+    - name: Start apache and enable across reboots
+      service:
+        name: httpd
+        state: started
+        enabled: yes
+    - name: Open Port 80 in firewalld
+      firewalld:
+        service: http
+        state: enabled
+        permanent: true
+        immediate: true
+    - name: Deploy PHP application
+      git:
+        repo: 'https://github.com/kxr/crud-php-simple.git'
+        dest: /var/www/html
+    - name: Create config.php from sample 
+      copy:
+        src: /var/www/html/config.php.sample
+        dest: /var/www/html/config.php
+        remote_src: yes
+        force: no
+    - name: Set database host in config.php
+      lineinfile:
+        path: /var/www/html/config.php
+        regexp: '^\$databaseHost = '
+        line: "$databaseHost = '{{hostvars['database.lab2']['ansible_default_ipv4']['address']}}';"
+    - name: Set database name in config.php
+      lineinfile:
+        path: /var/www/html/config.php
+        regexp: '^\$databaseName ='
+        line: "$databaseName = '{{dbname}}';"
+    - name: Set database user in config.php
+      lineinfile:
+        path: /var/www/html/config.php
+        regexp: '^\$databaseUsername ='
+        line: "$databaseUsername = '{{dbuser}}';"
+    - name: Set database password in config.php
+      lineinfile:
+        path: /var/www/html/config.php
+        regexp: '^\$databasePassword ='
+        line: "$databasePassword = '{{dbpass}}';"
+
+# Play for Database
+- hosts: database.lab2
+  tasks:
+    - name: Install Mariadb database server
+      yum:
+        name: mariadb-server
+        state: present
+    - name: Start and enable mariadb server across reboots
+      service:
+        name: mariadb
+        state: started
+        enabled: yes
+    - name: Open Port 3306 in firewalld
+      firewalld:
+        service: mysql
+        state: enabled
+        permanent: true
+        immediate: true
+    - name: Install MySQL-python libraries
+      yum:
+        name: MySQL-python
+        state: present
+    - name: Clone application repo to get the sql dump
+      git:
+        repo: 'https://github.com/kxr/crud-php-simple.git'
+        dest: /tmp/lab2app
+      register: repo
+    - name: Create the database for PHP Application and import the dump
+      mysql_db:
+        name: "{{dbname}}"
+        state: import
+        target: /tmp/lab2app/database.sql
+      when: repo.changed
+    - name: Create a mysql user for application and grant privileges
+      mysql_user:
+        user: "{{dbuser}}"
+        host: "{{hostvars['webserver.lab2']['ansible_default_ipv4']['address']}}"
+        password: "{{dbpass}}"
+        priv: "{{dbname}}.*:ALL"
+
+# Play for the Load Balancer
+- hosts: loadbalancer.lab2
+  tasks:
+    - name: Install haproxy loadbalancer
+      yum:
+        name: haproxy
+        state: present
+    - name: Start and enable haproxy server across reboots
+      service:
+        name: haproxy
+        state: started
+        enabled: yes
+    - name: Open Port 80 in firewalld
+      firewalld:
+        service: http
+        state: enabled
+        permanent: true
+        immediate: true
+    - name: Configure front end in haproxy
+      blockinfile:
+        path: /etc/haproxy/haproxy.cfg
+        block: |
+            frontend  appfront *:80
+                default_backend appbackend
+            backend appbackend
+                balance roundrobin
+                server app1 {{hostvars['webserver.lab2']['ansible_default_ipv4']['address']}}:80 check
+      register: lbconfig
+    - name: Restart haproxy if config changed
+      service:
+        name: haproxy
+        state: restarted
+      when: lbconfig.changed
+            
+    
+
+
+
+
