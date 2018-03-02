@@ -11,7 +11,7 @@
         name: "{{inventory_hostname}}"
     - name: Set timezone to Asia/Dubai
       timezone:
-        name: Asia/Dubai
+        name: America/New_York
     - name: Install network time service (chrony)
       yum:
         name: chrony
